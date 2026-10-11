@@ -1,6 +1,6 @@
 
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -12,6 +12,7 @@ import {
   doc,
   serverTimestamp,
   orderBy,
+  writeBatch,
 } from "firebase/firestore";
 import {
   MessageCircle,
@@ -19,11 +20,15 @@ import {
   Package,
   ArrowLeft,
   LoaderCircle,
+  Flag,
+  X,
 } from "lucide-react";
 
 import { auth, db } from "../firebase";
 
 export default function Messages() {
+  const [searchParams] = useSearchParams();
+  const requestedConversationId = searchParams.get("conversation");
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [conversations, setConversations] = useState([]);
@@ -33,6 +38,9 @@ export default function Messages() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState("Harassment or abuse");
+  const [reporting, setReporting] = useState(false);
 
   // Identify the currently signed-in student.
   useEffect(() => {
@@ -94,6 +102,17 @@ export default function Messages() {
       return;
     }
 
+    if (
+      requestedConversationId &&
+      conversations.some(
+        (conversation) =>
+          conversation.id === requestedConversationId
+      )
+    ) {
+      setSelectedId(requestedConversationId);
+      return;
+    }
+
     const selectedExists = conversations.some(
       (conversation) => conversation.id === selectedId
     );
@@ -101,7 +120,7 @@ export default function Messages() {
     if (!selectedExists) {
       setSelectedId(conversations[0].id);
     }
-  }, [conversations, selectedId]);
+  }, [conversations, selectedId, requestedConversationId]);
 
   const selectedConversation = conversations.find(
     (conversation) => conversation.id === selectedId
@@ -112,6 +131,12 @@ export default function Messages() {
       ? selectedConversation.sellerName || "Seller"
       : selectedConversation.buyerName || "Buyer"
     : "";
+
+  const otherStudentId = selectedConversation
+    ? selectedConversation.buyerId === user?.uid
+      ? selectedConversation.sellerId
+      : selectedConversation.buyerId
+    : null;
 
   // Listen for new messages in the selected conversation.
   useEffect(() => {
@@ -151,7 +176,13 @@ export default function Messages() {
 
     const text = messageText.trim();
 
-    if (!text || !user || !selectedConversation || sending) {
+    if (
+      !text ||
+      !user ||
+      !selectedConversation ||
+      selectedConversation.status === "reported" ||
+      sending
+    ) {
       return;
     }
 
@@ -194,6 +225,66 @@ export default function Messages() {
       setError("Message could not be sent. Please try again.");
     } finally {
       setSending(false);
+    }
+  }
+
+  async function handleReport(event) {
+    event.preventDefault();
+
+    if (
+      !user ||
+      !selectedConversation ||
+      !otherStudentId ||
+      reporting
+    ) {
+      return;
+    }
+
+    setReporting(true);
+    setError("");
+
+    try {
+      const reportRef = doc(collection(db, "reports"));
+      const batch = writeBatch(db);
+
+      batch.set(reportRef, {
+        conversationId: selectedConversation.id,
+        requestId: selectedConversation.requestId,
+        resourceTitle: selectedConversation.resourceTitle || "Resource",
+        reporterId: user.uid,
+        reporterName:
+          user.displayName ||
+          user.email?.split("@")[0] ||
+          "Student",
+        reportedUserId: otherStudentId,
+        reportedUserName: otherStudent,
+        reason: reportReason,
+        status: "open",
+        createdAt: serverTimestamp(),
+      });
+
+      batch.update(
+        doc(db, "conversations", selectedConversation.id),
+        {
+          status: "reported",
+          reportedBy: user.uid,
+          reportedUserId: otherStudentId,
+          reportId: reportRef.id,
+          updatedAt: serverTimestamp(),
+        }
+      );
+
+      await batch.commit();
+      setReportOpen(false);
+    } catch (err) {
+      console.error("Could not submit conversation report:", err);
+      setError(
+        err.code === "permission-denied"
+          ? "The report was denied by Firestore rules. Deploy the supplied report and conversation rules first."
+          : "Could not submit the report. Please try again."
+      );
+    } finally {
+      setReporting(false);
     }
   }
 
@@ -283,7 +374,7 @@ export default function Messages() {
                 No conversations yet
               </p>
               <p className="mt-1 text-xs text-slate-500">
-                Purchase a resource to start chatting with its seller.
+                An inbox conversation appears here when a request is accepted.
               </p>
               <Link
                 to="/browse"
@@ -368,6 +459,17 @@ export default function Messages() {
                   </p>
                 </div>
 
+                {selectedConversation.status !== "reported" && (
+                  <button
+                    type="button"
+                    onClick={() => setReportOpen(true)}
+                    className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                    aria-label={`Report conversation with ${otherStudent}`}
+                    title="Report conversation"
+                  >
+                    <Flag size={18} />
+                  </button>
+                )}
                 <Package size={20} className="text-slate-400" />
               </header>
 
@@ -376,6 +478,11 @@ export default function Messages() {
                   <span className="font-medium">About:</span>{" "}
                   {selectedConversation.resourceTitle || "Resource"}
                 </p>
+                {selectedConversation.status === "reported" && (
+                  <p className="mt-2 text-xs font-medium text-red-700">
+                    This conversation is locked while the report is reviewed.
+                  </p>
+                )}
               </div>
 
               <div className="flex-1 space-y-4 overflow-y-auto p-4">
@@ -429,43 +536,45 @@ export default function Messages() {
                 )}
               </div>
 
-              <form
-                onSubmit={handleSend}
-                className="flex items-end gap-2 border-t border-slate-200 p-3"
-              >
-                <textarea
-                  value={messageText}
-                  onChange={(event) => setMessageText(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === "Enter" &&
-                      !event.shiftKey &&
-                      !event.nativeEvent.isComposing
-                    ) {
-                      event.preventDefault();
-                      event.currentTarget.form?.requestSubmit();
-                    }
-                  }}
-                  maxLength={4000}
-                  rows={1}
-                  placeholder="Write a message..."
-                  aria-label="Write a message"
-                  className="max-h-32 min-h-11 flex-1 resize-y rounded-lg border border-slate-200 px-3 py-3 text-sm outline-none focus:border-blue-500"
-                />
-
-                <button
-                  type="submit"
-                  disabled={!messageText.trim() || sending}
-                  aria-label="Send message"
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              {selectedConversation.status !== "reported" && (
+                <form
+                  onSubmit={handleSend}
+                  className="flex items-end gap-2 border-t border-slate-200 p-3"
                 >
-                  {sending ? (
-                    <LoaderCircle size={18} className="animate-spin" />
-                  ) : (
-                    <Send size={18} />
-                  )}
-                </button>
-              </form>
+                  <textarea
+                    value={messageText}
+                    onChange={(event) => setMessageText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key === "Enter" &&
+                        !event.shiftKey &&
+                        !event.nativeEvent.isComposing
+                      ) {
+                        event.preventDefault();
+                        event.currentTarget.form?.requestSubmit();
+                      }
+                    }}
+                    maxLength={4000}
+                    rows={1}
+                    placeholder="Write a message..."
+                    aria-label="Write a message"
+                    className="max-h-32 min-h-11 flex-1 resize-y rounded-lg border border-slate-200 px-3 py-3 text-sm outline-none focus:border-blue-500"
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={!messageText.trim() || sending}
+                    aria-label="Send message"
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {sending ? (
+                      <LoaderCircle size={18} className="animate-spin" />
+                    ) : (
+                      <Send size={18} />
+                    )}
+                  </button>
+                </form>
+              )}
             </>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
@@ -486,6 +595,72 @@ export default function Messages() {
           )}
         </section>
       </div>
+
+      {reportOpen && selectedConversation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <form
+            onSubmit={handleReport}
+            className="w-full max-w-md space-y-4 rounded-xl bg-white p-6 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="report-title"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 id="report-title" className="text-lg font-bold">
+                  Report this conversation
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Reporting immediately locks this chat and sends it to the admin review queue.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReportOpen(false)}
+                className="text-slate-500 hover:text-slate-800"
+                aria-label="Close report dialog"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <label
+              htmlFor="report-reason"
+              className="block text-sm font-medium text-slate-700"
+            >
+              Reason
+            </label>
+            <select
+              id="report-reason"
+              value={reportReason}
+              onChange={(event) => setReportReason(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
+            >
+              <option>Harassment or abuse</option>
+              <option>Scam or misleading offer</option>
+              <option>Inappropriate content</option>
+              <option>Other safety concern</option>
+            </select>
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setReportOpen(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={reporting}
+                className="rounded-lg bg-red-600 px-4 py-2 text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                {reporting ? "Submitting..." : "Report and lock chat"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

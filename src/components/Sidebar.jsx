@@ -1,4 +1,5 @@
 
+import { useEffect, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Home,
@@ -15,9 +16,13 @@ import {
   X,
   Heart,
   LogOut,
+  ShieldAlert,
 } from 'lucide-react'
-import { signOut } from 'firebase/auth'
+import { onIdTokenChanged, signOut } from 'firebase/auth'
 import { auth } from '../firebase'
+import { collection, onSnapshot, query, where } from 'firebase/firestore'
+import { onAuthStateChanged } from 'firebase/auth'
+import { db } from '../firebase'
 
 const menuItems = [
   { label: 'Home', path: '/', icon: Home },
@@ -38,6 +43,61 @@ export default function Sidebar({
   setMobileOpen,
 }) {
   const navigate = useNavigate()
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  useEffect(() => {
+    return onIdTokenChanged(auth, async (user) => {
+      if (!user) {
+        setIsAdmin(false)
+        return
+      }
+
+      try {
+        const token = await user.getIdTokenResult()
+        setIsAdmin(token.claims.admin === true)
+      } catch (error) {
+        console.error('Could not verify administrator navigation:', error)
+        setIsAdmin(false)
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+  let unsubscribeConversations = () => {}
+
+  const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+    unsubscribeConversations()
+    setUnreadCount(0)
+
+    if (!user) return
+
+    const conversationsQuery = query(
+      collection(db, 'conversations'),
+      where('participants', 'array-contains', user.uid)
+    )
+
+    unsubscribeConversations = onSnapshot(
+      conversationsQuery,
+      (snapshot) => {
+        const count = snapshot.docs.filter((item) => {
+          const conversation = item.data()
+          return (conversation.unreadFor || []).includes(user.uid)
+        }).length
+
+        setUnreadCount(count)
+      },
+      (error) => {
+        console.error('Could not load unread messages:', error)
+      }
+    )
+  })
+
+  return () => {
+    unsubscribeAuth()
+    unsubscribeConversations()
+  }
+}, [])
 
   async function handleLogout() {
     try {
@@ -107,7 +167,9 @@ export default function Sidebar({
 
         {/* Navigation */}
         <nav className="flex-1 space-y-2 overflow-y-auto p-3">
-          {menuItems.map(({ label, path, icon: Icon }) => (
+          {[...menuItems, ...(isAdmin
+            ? [{ label: 'Reports', path: '/admin/reports', icon: ShieldAlert }]
+            : [])].map(({ label, path, icon: Icon }) => (
             <NavLink
               key={path}
               to={path}
@@ -126,10 +188,18 @@ export default function Sidebar({
               <Icon size={20} className="shrink-0" />
 
               {!collapsed && (
-                <span className="truncate text-sm font-medium">
-                  {label}
-                </span>
-              )}
+  <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+    <span className="truncate text-sm font-medium">
+      {label}
+    </span>
+
+    {label === 'Message' && unreadCount > 0 && (
+      <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white">
+        {unreadCount > 99 ? '99+' : unreadCount}
+      </span>
+    )}
+  </span>
+)}
             </NavLink>
           ))}
         </nav>

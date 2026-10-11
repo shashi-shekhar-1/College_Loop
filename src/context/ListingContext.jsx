@@ -490,7 +490,7 @@ export function ListingProvider({ children }) {
     const conversationRef = doc(
       db,
       "conversations",
-      `request_${requestId}`
+      String(requestId)
     );
 
     await runTransaction(db, async (transaction) => {
@@ -511,33 +511,27 @@ export function ListingProvider({ children }) {
       }
 
       if (status === "Accepted") {
-        const conversationSnapshot = await transaction.get(
-          conversationRef
-        );
-
-        if (!conversationSnapshot.exists()) {
-          transaction.set(conversationRef, {
-            requestId: String(requestId),
-            resourceId: request.resourceId,
-            resourceTitle: request.resourceTitle || "Resource",
-
-            buyerId: request.requesterId,
-            sellerId: request.ownerId,
-
-            buyerName: request.requesterName || "Buyer",
-            sellerName:
-              user.displayName ||
-              user.email?.split("@")[0] ||
-              request.ownerName ||
-              "Seller",
-
-            participants: [request.requesterId, request.ownerId],
-
-            lastMessage: "",
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        }
+        transaction.set(conversationRef, {
+          requestId: String(requestId),
+          resourceId: request.resourceId,
+          resourceTitle: request.resourceTitle || "Resource",
+          buyerId: request.requesterId,
+          sellerId: request.ownerId,
+          buyerName:
+            request.requesterName ||
+            request.requesterEmail?.split("@")[0] ||
+            "Buyer",
+          sellerName:
+            request.ownerName ||
+            user.displayName ||
+            user.email?.split("@")[0] ||
+            "Seller",
+          participants: [request.requesterId, request.ownerId],
+          status: "active",
+          lastMessage: "",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
       }
 
       transaction.update(requestRef, { status });

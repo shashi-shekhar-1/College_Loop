@@ -128,7 +128,9 @@ export default function MyRequests() {
     } catch (error) {
       console.error("Could not update request:", error);
       setActionError(
-        error.message || "Could not update the request."
+        error.code === "permission-denied"
+          ? "Firebase blocked this action. Deploy firestore.rules and make sure you are signed in as the owner of this listing."
+          : error.message || "Could not update the request."
       );
     } finally {
       setUpdatingId(null);
@@ -192,13 +194,10 @@ export default function MyRequests() {
             </p>
 
             <p className="mt-1 text-xs text-slate-500">
+              {incoming ? "Requested by" : "Seller"}:{" "}
               {incoming
-                ? "Buyer ID"
-                : "Seller ID"}
-              :{" "}
-              {incoming
-                ? request.requesterId
-                : request.ownerId}
+                ? request.requesterName || "Student"
+                : request.ownerName || "Student"}
             </p>
           </div>
         </div>
@@ -240,11 +239,26 @@ export default function MyRequests() {
               Your request was accepted.
             </p>
             <Link
-              to="/messages"
+              to={`/messages?conversation=${encodeURIComponent(request.id)}`}
               className="mt-3 inline-flex items-center gap-2 rounded-lg border border-blue-200 px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50"
             >
               <MessageCircle size={16} />
               Messages
+            </Link>
+          </div>
+        )}
+
+        {incoming && status === "Accepted" && (
+          <div className="mt-4 border-t border-slate-100 pt-3">
+            <p className="text-sm text-green-700">
+              You accepted this request. Continue negotiating in your private chat.
+            </p>
+            <Link
+              to={`/messages?conversation=${encodeURIComponent(request.id)}`}
+              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-blue-200 px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50"
+            >
+              <MessageCircle size={16} />
+              Open Chat
             </Link>
           </div>
         )}

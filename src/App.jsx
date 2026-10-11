@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import MainLayout from './layouts/Mainlayout'
 import Home from './pages/Home'
@@ -12,6 +13,7 @@ import Messages from './pages/Messages.jsx'
 import Auth from './pages/Auth.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
 import EditResource from './pages/EditResource.jsx'
+const AdminReports = lazy(() => import('./pages/AdminReports.jsx'))
 
 
 function Placeholder({ title }) {
@@ -42,6 +44,20 @@ export default function App() {
           <Route path="/my-listings" element={<MyListings />} />
           <Route path="/my-requests" element={<MyRequests />} />
           <Route path="/messages" element={<Messages />} />
+          <Route
+            path="/admin/reports"
+            element={
+              <Suspense
+                fallback={
+                  <div className="p-8 text-center text-slate-500">
+                    Loading moderation tools...
+                  </div>
+                }
+              >
+                <AdminReports />
+              </Suspense>
+            }
+          />
           <Route path="/wishlist" element={<Wishlist />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/settings" element={<Settings />} />
