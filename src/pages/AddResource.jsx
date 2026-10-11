@@ -1,7 +1,9 @@
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useListings } from '../context/ListingContext'
+import { auth, storage } from '../firebase'
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 
 const initialForm = {
   title: '',
@@ -17,8 +19,24 @@ const initialForm = {
 export default function AddResource() {
   const { addListing } = useListings()
   const navigate = useNavigate()
+
   const [form, setForm] = useState(initialForm)
+  const [selectedImage, setSelectedImage] = useState(null)
+  const [previewUrl, setPreviewUrl] = useState('')
   const [error, setError] = useState('')
+  const [publishing, setPublishing] = useState(false)
+
+  useEffect(() => {
+    if (!selectedImage) {
+      setPreviewUrl('')
+      return
+    }
+
+    const url = URL.createObjectURL(selectedImage)
+    setPreviewUrl(url)
+
+    return () => URL.revokeObjectURL(url)
+  }, [selectedImage])
 
   function handleChange(event) {
     const { name, value } = event.target
@@ -29,47 +47,109 @@ export default function AddResource() {
     }))
   }
 
-  
-async function handleSubmit(event) {
-  event.preventDefault();
-  setError("");
+  function handleImageChange(event) {
+    const file = event.target.files?.[0]
 
-  if (!form.title.trim() || !form.description.trim()) {
-    setError("Please enter the resource name and description.");
-    return;
+    setError('')
+
+    if (!file) {
+      setSelectedImage(null)
+      return
+    }
+
+    if (!file.type.startsWith('image/')) {
+      setError('Please select a valid image file.')
+      event.target.value = ''
+      setSelectedImage(null)
+      return
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Image size must be less than 5 MB.')
+      event.target.value = ''
+      setSelectedImage(null)
+      return
+    }
+
+    setSelectedImage(file)
   }
 
-  if (
-    form.transactionType !== "Donate" &&
-    (
-      form.price === "" ||
-      !Number.isFinite(Number(form.price)) ||
-      Number(form.price) < 0
-    )
-  ) {
-    setError("Please enter a valid price.");
-    return;
+  async function handleSubmit(event) {
+    event.preventDefault()
+    setError('')
+
+    if (!form.title.trim() || !form.description.trim()) {
+      setError('Please enter the resource name and description.')
+      return
+    }
+
+    if (
+      form.transactionType !== 'Donate' &&
+      (
+        form.price === '' ||
+        !Number.isFinite(Number(form.price)) ||
+        Number(form.price) < 0
+      )
+    ) {
+      setError('Please enter a valid price.')
+      return
+    }
+
+    if (!auth.currentUser) {
+      setError('Please log in before publishing a resource.')
+      return
+    }
+
+    setPublishing(true)
+
+    try {
+      let imageUrl = ''
+
+      // Upload the selected image, if one was chosen.
+      if (selectedImage) {
+        const safeFileName = selectedImage.name.replace(
+          /[^a-zA-Z0-9._-]/g,
+          '_'
+        )
+
+        const imageRef = ref(
+          storage,
+          `resources/${auth.currentUser.uid}/${Date.now()}-${safeFileName}`
+        )
+
+        const uploadResult = await uploadBytes(
+          imageRef,
+          selectedImage,
+          { contentType: selectedImage.type }
+        )
+
+        imageUrl = await getDownloadURL(uploadResult.ref)
+      }
+
+      // Save the listing and its image URL in Firestore.
+      await addListing({
+        ...form,
+        title: form.title.trim(),
+        description: form.description.trim(),
+        price:
+          form.transactionType === 'Donate'
+            ? 0
+            : Number(form.price),
+        sellerName:
+          form.sellerName.trim() || 'Campus student',
+        image: imageUrl,
+      })
+
+      navigate('/browse')
+    } catch (err) {
+      console.error('Error publishing resource:', err)
+      setError(
+        err.message || 'Could not publish resource. Please try again.'
+      )
+    } finally {
+      setPublishing(false)
+    }
   }
-
-  try {
-    await addListing({
-      ...form,
-      title: form.title.trim(),
-      description: form.description.trim(),
-      price:
-        form.transactionType === "Donate"
-          ? 0
-          : Number(form.price),
-      sellerName: form.sellerName.trim() || "Campus student",
-    });
-
-    navigate("/browse");
-  } catch (error) {
-    console.error("Error publishing resource:", error);
-    setError(error.message || "Could not publish resource. Please try again.");
-  }
-}
-
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -213,21 +293,44 @@ async function handleSubmit(event) {
         </div>
 
         <div>
-          <label htmlFor="image" className="mb-2 block text-sm font-medium">
-            Image URL (optional, temporary)
+          <label htmlFor="imageFile" className="mb-2 block text-sm font-medium">
+            Resource image (optional)
           </label>
           <input
-            id="image"
-            name="image"
-            type="url"
-            value={form.image}
-            onChange={handleChange}
-            placeholder="https://example.com/image.jpg"
-            className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-blue-500"
+            id="imageFile"
+            name="imageFile"
+            type="file"
+            accept="image/*"
+            onChange={handleImageChange}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm file:mr-4 file:rounded-md file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:font-medium file:text-blue-700"
           />
           <p className="mt-1 text-xs text-slate-500">
-            We'll add image uploads when we connect Firebase Storage.
+            Choose an image from your computer. Maximum size: 5 MB.
           </p>
+
+          {previewUrl && (
+            <div className="mt-3">
+              <p className="mb-2 text-sm text-slate-600">
+                Image preview
+              </p>
+              <img
+                src={previewUrl}
+                alt="Selected resource preview"
+                className="h-44 max-w-full rounded-lg border border-slate-200 object-contain"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedImage(null)
+                  const input = document.getElementById('imageFile')
+                  if (input) input.value = ''
+                }}
+                className="mt-2 text-sm font-medium text-red-600 hover:underline"
+              >
+                Remove image
+              </button>
+            </div>
+          )}
         </div>
 
         {error && (
@@ -240,16 +343,18 @@ async function handleSubmit(event) {
           <button
             type="button"
             onClick={() => navigate('/browse')}
-            className="rounded-lg border border-slate-300 px-5 py-2.5 text-sm font-medium hover:bg-slate-50"
+            disabled={publishing}
+            className="rounded-lg border border-slate-300 px-5 py-2.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
           >
             Cancel
-          </button> 
+          </button>
 
           <button
             type="submit"
-            className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
+            disabled={publishing}
+            className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Publish Resource
+            {publishing ? 'Publishing...' : 'Publish Resource'}
           </button>
         </div>
       </form>

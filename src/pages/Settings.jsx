@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   UserRound,
   Bell,
@@ -12,6 +12,9 @@ import {
   Sun,
   Moon,
 } from "lucide-react";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { sendPasswordResetEmail, signOut } from "firebase/auth";
+import { auth, db } from "../firebase";
 
 const defaultSettings = {
   messageNotifications: true,
@@ -22,63 +25,113 @@ const defaultSettings = {
 
 export default function Settings() {
   const [settings, setSettings] = useState(defaultSettings);
-  const [savedSettings, setSavedSettings] = useState(defaultSettings);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
-  const updateSetting = (key, value) => {
-  setSettings((previous) => ({
-    ...previous,
-    [key]: value,
-  }));
+  const user = auth.currentUser;
 
-  if (key === "theme") {
+  useEffect(() => {
+    let active = true;
+
+    async function loadSettings() {
+      try {
+        if (user) {
+          const userRef = doc(db, "users", user.uid);
+          const snapshot = await getDoc(userRef);
+          const saved = snapshot.exists()
+            ? snapshot.data().settings
+            : null;
+
+          if (active && saved) {
+            setSettings({
+              ...defaultSettings,
+              ...saved,
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Could not load settings:", error);
+        if (active) {
+          setMessage("Could not load saved preferences.");
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    loadSettings();
+
+    return () => {
+      active = false;
+    };
+  }, [user?.uid]);
+
+  // Apply theme immediately and remember it across refreshes.
+  useEffect(() => {
     document.documentElement.classList.toggle(
       "dark",
-      value === "dark"
+      settings.theme === "dark"
     );
-  }
+    localStorage.setItem("campus-loop-theme", settings.theme);
+  }, [settings.theme]);
 
-  setMessage("");
-};
+  const updateSetting = (key, value) => {
+    setSettings((previous) => ({
+      ...previous,
+      [key]: value,
+    }));
+    setMessage("");
+  };
 
-  // Later: load saved preferences from Firebase Firestore.
   const handleSave = async () => {
+    if (!user) {
+      setMessage("Please log in to save preferences.");
+      return;
+    }
+
     setSaving(true);
     setMessage("");
 
     try {
-      // Firebase saving will be added here.
-      setSavedSettings({ ...settings });
-
-      if (settings.theme !== savedSettings.theme) {
-        document.documentElement.classList.toggle(
-          "dark",
-          settings.theme === "dark"
-        );
-      }
+      await setDoc(
+        doc(db, "users", user.uid),
+        { settings },
+        { merge: true }
+      );
 
       setMessage("Preferences saved successfully.");
     } catch (error) {
-      setMessage("Unable to save preferences. Please try again.");
+      console.error("Settings save error:", error);
+      setMessage(
+        "Could not save preferences. Check your Firestore rules."
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  const handlePasswordChange = () => {
-    // Later: use Firebase Authentication's password reset flow.
-    setMessage("Password change will be available after authentication is connected.");
+  const handlePasswordChange = async () => {
+    if (!user?.email) {
+      setMessage("Please log in with your email first.");
+      return;
+    }
+
+    try {
+      await sendPasswordResetEmail(auth, user.email);
+      setMessage(`Password reset email sent to ${user.email}.`);
+    } catch (error) {
+      console.error(error);
+      setMessage(error.message || "Could not send password reset email.");
+    }
   };
 
-  const handleSignOut = () => {
-    // Later: call Firebase signOut(auth).
-    setMessage("Sign out will be available after authentication is connected.");
-  };
-
-  const handleDeleteAccount = () => {
-    // Later: require confirmation and delete through Firebase securely.
-    setMessage("Account deletion will be available after authentication is connected.");
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      setMessage("Could not sign out. Please try again.");
+    }
   };
 
   const Toggle = ({ checked, onChange, label }) => (
@@ -106,202 +159,181 @@ export default function Settings() {
         <Icon size={21} />
       </div>
       <div>
-        <h2 className="font-semibold text-slate-900">{title}</h2>
-        <p className="mt-1 text-sm text-slate-500">{description}</p>
+        <h2 className="font-semibold text-slate-900 dark:text-white">
+          {title}
+        </h2>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          {description}
+        </p>
       </div>
     </div>
   );
 
   const Row = ({ title, description, children }) => (
-    <div className="flex flex-col gap-3 border-t border-slate-100 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 border-t border-slate-100 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700">
       <div className="min-w-0">
-        <p className="text-sm font-medium text-slate-800">{title}</p>
-        <p className="mt-1 text-sm text-slate-500">{description}</p>
+        <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
+          {title}
+        </p>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          {description}
+        </p>
       </div>
       <div className="sm:ml-6">{children}</div>
     </div>
   );
 
+  const sectionClass =
+    "rounded-xl border border-slate-200 bg-white p-5 sm:p-6 dark:border-slate-700 dark:bg-slate-800";
+
+  if (loading) {
+    return (
+      <div className="p-6 text-slate-600 dark:text-slate-300">
+        Loading settings...
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-5 pb-8">
-      {/* Page heading */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
+          Settings
+        </h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           Manage your account and preferences.
         </p>
       </div>
 
-      {/* Account */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+      <section className={sectionClass}>
         <SectionHeading
           icon={UserRound}
           title="Account"
           description="Manage your account information and security."
           color="bg-blue-50 text-blue-600"
         />
-
         <Row
           title="Email address"
-          description="Your registered email will appear here after login."
+          description="Your registered email address."
         >
-          <span className="text-sm text-slate-600">
-            Not connected
+          <span className="break-all text-sm text-slate-600 dark:text-slate-300">
+            {user?.email || "Not connected"}
           </span>
         </Row>
-
         <Row
           title="Password"
-          description="Use a secure password for your account."
+          description="Receive an email to reset your password."
         >
           <button
             type="button"
             onClick={handlePasswordChange}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm dark:border-slate-600 dark:text-white"
           >
             <LockKeyhole size={16} />
-            Change password
+            Reset password
           </button>
         </Row>
       </section>
 
-      {/* Notifications */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+      <section className={sectionClass}>
         <SectionHeading
           icon={Bell}
           title="Notifications"
           description="Choose which updates you want to receive."
           color="bg-green-50 text-green-700"
         />
-
         <Row
           title="Messages and replies"
-          description="Get notified when someone messages you or replies to a request."
+          description="Preference for message and request updates."
         >
           <Toggle
             label="Message notifications"
             checked={settings.messageNotifications}
-            onChange={(value) =>
-              updateSetting("messageNotifications", value)
-            }
+            onChange={(v) => updateSetting("messageNotifications", v)}
           />
         </Row>
-
         <Row
           title="Wishlist updates"
-          description="Get updates about resources you have saved."
+          description="Preference for saved-resource updates."
         >
           <Toggle
             label="Wishlist notifications"
             checked={settings.wishlistNotifications}
-            onChange={(value) =>
-              updateSetting("wishlistNotifications", value)
-            }
+            onChange={(v) => updateSetting("wishlistNotifications", v)}
           />
         </Row>
       </section>
 
-      {/* Privacy */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+      <section className={sectionClass}>
         <SectionHeading
           icon={Shield}
           title="Privacy"
           description="Control how your profile appears to other students."
           color="bg-purple-50 text-purple-600"
         />
-
         <Row
           title="Show my profile to students"
-          description="Allow other students to view your profile and listings."
+          description="Save your preference for profile visibility."
         >
           <Toggle
             label="Public profile"
             checked={settings.publicProfile}
-            onChange={(value) => updateSetting("publicProfile", value)}
+            onChange={(v) => updateSetting("publicProfile", v)}
           />
         </Row>
       </section>
 
-      {/* Appearance */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+      <section className={sectionClass}>
         <SectionHeading
           icon={Palette}
           title="Appearance"
           description="Choose how Campus Loop looks."
           color="bg-orange-50 text-orange-600"
         />
-
-        <Row
-          title="Theme"
-          description="Select your preferred appearance."
-        >
+        <Row title="Theme" description="Switch between light and dark mode.">
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => updateSetting("theme", "light")}
-              aria-pressed={settings.theme === "light"}
-              className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm ${
-                settings.theme === "light"
-                  ? "border-blue-500 bg-blue-50 text-blue-700"
-                  : "border-slate-300 text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              <Sun size={16} />
-              Light
-            </button>
-
-            <button
-              type="button"
-              onClick={() => updateSetting("theme", "dark")}
-              aria-pressed={settings.theme === "dark"}
-              className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm ${
-                settings.theme === "dark"
-                  ? "border-blue-500 bg-blue-50 text-blue-700"
-                  : "border-slate-300 text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              <Moon size={16} />
-              Dark
-            </button>
+            {["light", "dark"].map((theme) => (
+              <button
+                key={theme}
+                type="button"
+                onClick={() => updateSetting("theme", theme)}
+                aria-pressed={settings.theme === theme}
+                className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm ${
+                  settings.theme === theme
+                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                    : "border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200"
+                }`}
+              >
+                {theme === "light" ? <Sun size={16} /> : <Moon size={16} />}
+                {theme === "light" ? "Light" : "Dark"}
+              </button>
+            ))}
           </div>
         </Row>
       </section>
 
-      {/* Account actions */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+      <section className={sectionClass}>
         <SectionHeading
           icon={Trash2}
           title="Account actions"
           description="Manage your Campus Loop account."
           color="bg-red-50 text-red-600"
         />
-
-        <div className="flex flex-wrap gap-3 border-t border-slate-100 pt-4">
+        <div className="border-t border-slate-100 pt-4 dark:border-slate-700">
           <button
             type="button"
             onClick={handleSignOut}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium dark:border-slate-600 dark:text-white"
           >
             <LogOut size={16} />
             Sign out
           </button>
-
-          <button
-            type="button"
-            onClick={handleDeleteAccount}
-            className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50"
-          >
-            <Trash2 size={16} />
-            Delete account
-          </button>
         </div>
-
-        <p className="mt-3 text-xs text-slate-500">
-          Account actions will be connected to Firebase Authentication later.
+        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+          Account deletion is not enabled yet.
         </p>
       </section>
 
-      {/* Save preferences */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <button
           type="button"
@@ -314,7 +346,7 @@ export default function Settings() {
         </button>
 
         {message && (
-          <p role="status" className="text-sm text-slate-600">
+          <p role="status" className="text-sm text-slate-600 dark:text-slate-300">
             {message}
           </p>
         )}

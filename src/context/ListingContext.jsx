@@ -427,47 +427,95 @@ export function ListingProvider({ children }) {
   // Create a purchase/resource request.
  
   // Create a purchase/resource request.
-  async function createRequest(resourceId) {
-    const user = auth.currentUser;
+ async function createRequest(resourceId) {
+  const user = auth.currentUser;
 
-    if (!user) {
-      throw new Error("Please log in to request a resource.");
+  if (!user) {
+    throw new Error("Please log in to request a resource.");
+  }
+
+  const resourceIdString = String(resourceId);
+
+  // Check previous requests from this student for this resource.
+  const existingRequestsQuery = query(
+    collection(db, "requests"),
+    where("requesterId", "==", user.uid),
+    where("resourceId", "==", resourceIdString)
+  );
+
+  const existingRequests = await getDocs(existingRequestsQuery);
+
+  const alreadyRequested = existingRequests.docs.some((requestDoc) => {
+    const request = requestDoc.data();
+    return ["Pending", "Accepted"].includes(request.status);
+  });
+
+  if (alreadyRequested) {
+    throw new Error(
+      "You have already requested this resource. Check My Requests for its status."
+    );
+  }
+
+  // Use a predictable ID to prevent duplicate creation from repeated clicks.
+  const safeUserId = user.uid.replaceAll("/", "_");
+  const safeResourceId = resourceIdString.replaceAll("/", "_");
+  const requestRef = doc(
+    db,
+    "requests",
+    `${safeResourceId}_${safeUserId}`
+  );
+
+  const listingRef = doc(db, "listings", resourceIdString);
+
+  await runTransaction(db, async (transaction) => {
+    // Read before writing.
+    const listingSnapshot = await transaction.get(listingRef);
+    const requestSnapshot = await transaction.get(requestRef);
+
+    if (!listingSnapshot.exists()) {
+      throw new Error("This resource is no longer available.");
     }
 
-    const listingRef = doc(db, "listings", String(resourceId));
-    const requestRef = doc(collection(db, "requests"));
+    const listing = listingSnapshot.data();
 
-    await runTransaction(db, async (transaction) => {
-      const listingSnapshot = await transaction.get(listingRef);
+    if (listing.ownerId === user.uid) {
+      throw new Error("You cannot request your own resource.");
+    }
 
-      if (!listingSnapshot.exists()) {
-        throw new Error("This resource is no longer available.");
+    // Another click or concurrent attempt may already have created it.
+    if (requestSnapshot.exists()) {
+      const existingRequest = requestSnapshot.data();
+
+      if (["Pending", "Accepted"].includes(existingRequest.status)) {
+        throw new Error(
+          "You have already requested this resource. Check My Requests."
+        );
       }
 
-      const listing = listingSnapshot.data();
+      // Do not overwrite an earlier Rejected request.
+      throw new Error(
+        "A previous request exists for this resource. Please contact the seller if needed."
+      );
+    }
 
-      if (listing.ownerId === user.uid) {
-        throw new Error("You cannot request your own resource.");
-      }
-
-      transaction.set(requestRef, {
-        resourceId: String(resourceId),
-        resourceTitle: listing.title || listing.name || "Untitled resource",
-        resourceCategory: listing.category || "Other",
-        price: listing.price ?? null,
-        imageUrl: listing.imageUrl || listing.image || "",
-        requesterId: user.uid,
-        requesterName:
-          user.displayName || user.email?.split("@")[0] || "Student",
-        ownerId: listing.ownerId,
-        ownerName: listing.sellerName || "Seller",
-        status: "Pending",
-        createdAt: serverTimestamp(),
-      });
+    transaction.set(requestRef, {
+      resourceId: resourceIdString,
+      resourceTitle: listing.title || listing.name || "Untitled resource",
+      resourceCategory: listing.category || "Other",
+      price: listing.price ?? null,
+      imageUrl: listing.imageUrl || listing.image || "",
+      requesterId: user.uid,
+      requesterName:
+        user.displayName || user.email?.split("@")[0] || "Student",
+      ownerId: listing.ownerId,
+      ownerName: listing.sellerName || "Seller",
+      status: "Pending",
+      createdAt: serverTimestamp(),
     });
+  });
 
-    return requestRef.id;
-  }
+  return requestRef.id;
+}
 
 
 
