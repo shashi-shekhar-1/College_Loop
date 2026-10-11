@@ -29,37 +29,47 @@ export default function AddResource() {
     }))
   }
 
-  function handleSubmit(event) {
-    event.preventDefault()
-    setError('')
+  
+async function handleSubmit(event) {
+  event.preventDefault();
+  setError("");
 
-    if (!form.title.trim() || !form.description.trim()) {
-      setError('Please enter the resource name and description.')
-      return
-    }
+  if (!form.title.trim() || !form.description.trim()) {
+    setError("Please enter the resource name and description.");
+    return;
+  }
 
-    if (
-      form.transactionType !== 'Donate' &&
-      (form.price === '' ||
-        !Number.isFinite(Number(form.price)) ||
-        Number(form.price) < 0)
-    ) {
-      setError('Please enter a valid price.')
-      return
-    }
+  if (
+    form.transactionType !== "Donate" &&
+    (
+      form.price === "" ||
+      !Number.isFinite(Number(form.price)) ||
+      Number(form.price) < 0
+    )
+  ) {
+    setError("Please enter a valid price.");
+    return;
+  }
 
-    addListing({
+  try {
+    await addListing({
       ...form,
       title: form.title.trim(),
       description: form.description.trim(),
-      price: form.transactionType === 'Donate'
-        ? 0
-        : Number(form.price),
-      sellerName: form.sellerName.trim() || 'Campus student',
-    })
+      price:
+        form.transactionType === "Donate"
+          ? 0
+          : Number(form.price),
+      sellerName: form.sellerName.trim() || "Campus student",
+    });
 
-    navigate('/browse')
+    navigate("/browse");
+  } catch (error) {
+    console.error("Error publishing resource:", error);
+    setError(error.message || "Could not publish resource. Please try again.");
   }
+}
+
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

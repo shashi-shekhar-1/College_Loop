@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom'
+
+import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Home,
   Search,
@@ -13,7 +14,10 @@ import {
   GraduationCap,
   X,
   Heart,
+  LogOut,
 } from 'lucide-react'
+import { signOut } from 'firebase/auth'
+import { auth } from '../firebase'
 
 const menuItems = [
   { label: 'Home', path: '/', icon: Home },
@@ -22,7 +26,7 @@ const menuItems = [
   { label: 'My Listings', path: '/my-listings', icon: Package },
   { label: 'My Requests', path: '/my-requests', icon: ClipboardList },
   { label: 'Message', path: '/messages', icon: MessageCircle },
-  {label:'Whishlist', path:'/wishlist', icon: Heart}, // I want this also
+  { label: 'Wishlist', path: '/wishlist', icon: Heart },
   { label: 'Profile', path: '/profile', icon: UserRound },
   { label: 'Setting', path: '/settings', icon: Settings },
 ]
@@ -33,6 +37,19 @@ export default function Sidebar({
   mobileOpen,
   setMobileOpen,
 }) {
+  const navigate = useNavigate()
+
+  async function handleLogout() {
+    try {
+      await signOut(auth)
+      setMobileOpen(false)
+      navigate('/auth', { replace: true })
+    } catch (error) {
+      console.error('Logout failed:', error)
+      alert('Unable to log out. Please try again.')
+    }
+  }
+
   return (
     <>
       {/* Mobile backdrop */}
@@ -117,11 +134,34 @@ export default function Sidebar({
           ))}
         </nav>
 
-        {!collapsed && (
-          <div className="border-t border-slate-700 p-4 text-xs text-slate-400">
-            BIT Sindri Student Marketplace
-          </div>
-        )}
+        {/* Logout button */}
+        <div className="shrink-0 border-t border-slate-700 p-3">
+          <button
+            type="button"
+            onClick={handleLogout}
+            title={collapsed ? 'Logout' : undefined}
+            className={`
+              flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-3
+              text-slate-300 transition-colors
+              hover:bg-red-600 hover:text-white
+              ${collapsed ? 'justify-center' : ''}
+            `}
+          >
+            <LogOut size={20} className="shrink-0" />
+
+            {!collapsed && (
+              <span className="text-sm font-medium">
+                Logout
+              </span>
+            )}
+          </button>
+
+          {!collapsed && (
+            <p className="mt-3 px-1 text-xs text-slate-400">
+              BIT Sindri Student Marketplace
+            </p>
+          )}
+        </div>
       </aside>
     </>
   )
