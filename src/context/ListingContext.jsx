@@ -13,7 +13,7 @@ import {
   collection,
   deleteDoc,
   doc,
-  getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,

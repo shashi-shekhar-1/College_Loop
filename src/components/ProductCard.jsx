@@ -7,6 +7,7 @@ import {
   Tag,
   ShoppingCart,
 } from "lucide-react";
+import {getDocs} from "firebase/firestore";
 
 import { useListings } from "../context/ListingContext";
 

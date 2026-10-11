@@ -62,7 +62,17 @@ service cloud.firestore {
     }
 
     match /requests/{requestId} {
-      allow read: if activeUser() &&
+      // A buyer transaction reads its deterministic request ID before
+      // creating it. Permit authenticated reads of a missing document;
+      // existing request documents remain private to their participants.
+      allow get: if activeUser() &&
+        (
+          !exists(/databases/$(database)/documents/requests/$(requestId)) ||
+          resource.data.requesterId == request.auth.uid ||
+          resource.data.ownerId == request.auth.uid
+        );
+
+      allow list: if activeUser() &&
         (
           resource.data.requesterId == request.auth.uid ||
           resource.data.ownerId == request.auth.uid
